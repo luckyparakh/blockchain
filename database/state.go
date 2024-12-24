@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
+	"time"
 )
 
 type State struct {
@@ -14,25 +14,27 @@ type State struct {
 	txMemPool []Tx
 
 	dbFile *os.File
-	logger *slog.Logger
+	Logger *slog.Logger
+
+	latestBlockHash Hash
 }
 
-func NewStateFromDisk() (*State, error) {
+func NewStateFromDisk(dataDir string) (*State, error) {
 
 	var state = State{}
-	state.logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	state.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		AddSource: true, // Add func, line and file name
-		Level: slog.LevelDebug,
+		Level:     slog.LevelDebug,
 	}))
-	state.logger.Info("New State from Disk")
-	cwd, err := os.Getwd()
+	state.Logger.Info("New State from Disk")
+
+	err := initDataDirIfNotExists(dataDir)
 	if err != nil {
 		return nil, err
 	}
+
 	// Read Genesis file
-	gfPath := filepath.Join(cwd, "database", "genesis.json")
-	state.logger.Debug(gfPath)
-	gf, err := loadGenesis(gfPath)
+	gf, err := loadGenesis(getGenesisJsonFilePath(dataDir))
 	if err != nil {
 		return nil, err
 	}
@@ -41,21 +43,19 @@ func NewStateFromDisk() (*State, error) {
 		b[account] = balance
 	}
 	state.Balances = b
-	state.logger.Debug(fmt.Sprintf("GB %v", state.Balances))
-	
-	txFilePath := filepath.Join(cwd, "database", "tx.db")
-	state.logger.Debug(fmt.Sprintf("GB %v", txFilePath))
-	f, err := os.OpenFile(txFilePath, os.O_APPEND|os.O_RDWR, 0600)
+	state.Logger.Debug(fmt.Sprintf("GB %v", state.Balances))
+
+	f, err := os.OpenFile(getBlocksDbFilePath(dataDir), os.O_APPEND|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}
 	state.dbFile = f
 	scanner := bufio.NewScanner(f)
-	
+
 	for scanner.Scan() {
 		var tx Tx
 		err := json.Unmarshal(scanner.Bytes(), &tx)
-		state.logger.Debug(fmt.Sprintf("tx %v", tx))
+		state.Logger.Debug(fmt.Sprintf("tx %v", tx))
 		if err != nil {
 			return nil, err
 		}
@@ -83,7 +83,14 @@ func (s *State) apply(tx Tx) error {
 	s.Balances[tx.From] -= tx.Value
 	return nil
 }
-
+func (s *State) AddBlock(b Block) error {
+	for _, tx := range b.Txs {
+		if err := s.Add(tx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 func (s *State) Add(tx Tx) error {
 	err := s.apply(tx)
 	if err != nil {
@@ -92,22 +99,28 @@ func (s *State) Add(tx Tx) error {
 	s.txMemPool = append(s.txMemPool, tx)
 	return nil
 }
+func (s *State) LatestBlockHash() Hash {
+	return s.latestBlockHash
+}
 
-func (s *State) Persist() error {
-	memPool := make([]Tx, len(s.txMemPool))
-	// Copy txMemPool as its value will change in the loop
-	copy(memPool, s.txMemPool)
-	for _, v := range memPool {
-		data, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		_, err = s.dbFile.Write(append(data, '\n'))
-		if err != nil {
-			return err
-		}
-		// Remove the TX written to a file from the mempool
-		s.txMemPool = s.txMemPool[1:]
+func (s *State) Persist() (Hash, error) {
+	b := NewBlock(s.latestBlockHash, uint64(time.Now().Unix()), s.txMemPool)
+	blockHash, err := b.Hash()
+	if err != nil {
+		return Hash{}, err
 	}
-	return nil
+	blockFS := BlockFS{blockHash, b}
+	data, err := json.Marshal(blockFS)
+	if err != nil {
+		return Hash{}, err
+	}
+	s.Logger.Info(fmt.Sprintf("Persisting new Block to disk:%v\n", blockFS))
+
+	_, err = s.dbFile.Write(append(data, '\n'))
+	if err != nil {
+		return Hash{}, err
+	}
+	s.latestBlockHash = blockHash
+	s.txMemPool = []Tx{}
+	return blockHash, nil
 }

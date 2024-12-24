@@ -1,3 +1,5 @@
+// NOT IN USE as replaced with Run.go
+
 package main
 
 import (
@@ -38,7 +40,7 @@ func txAddCmd() *cobra.Command {
 			data, _ := cmd.Flags().GetString(flagData)
 
 			tx := database.NewTx(database.Account(from), database.Account(to), value, data)
-			state, err := database.NewStateFromDisk()
+			state, err := database.NewStateFromDisk("")
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err.Error())
 				os.Exit(1)
@@ -49,7 +51,7 @@ func txAddCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, err.Error())
 				os.Exit(1)
 			}
-			err = state.Persist()
+			_, err = state.Persist()
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err.Error())
 				os.Exit(1)
