@@ -1,0 +1,7 @@
+{
+    "genesis_time": "2024-12-18T00:00:00.000000000Z",
+    "chain_id": "the-blockchain-bar-ledger",
+    "balances": {
+      "rishi": 1000000
+    }
+  }
